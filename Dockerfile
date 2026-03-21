@@ -8,7 +8,7 @@ WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
-COPY go.mod go.sum ./
+COPY go.mod ./
 RUN GOTOOLCHAIN=local go mod download
 
 COPY . .
