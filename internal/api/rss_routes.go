@@ -401,23 +401,21 @@ func generateStoryMedia(aiService *services.AIService) gin.HandlerFunc {
 			return
 		}
 
-		// Generate images with Google Imagen
+		// Generate images with Google Imagen; fall back to placeholders if not configured
 		images, err := aiService.GenerateStoryImagesWithImagen(request.Title, request.Description)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "Failed to generate images",
-				"details": err.Error(),
-			})
-			return
+			logrus.WithError(err).Warn("Image generation unavailable, using placeholders")
+			images = []map[string]interface{}{
+				{"url": "https://placehold.co/800x450?text=Story+Image+1", "type": "story", "source": "placeholder", "index": 1},
+				{"url": "https://placehold.co/800x450?text=Story+Image+2", "type": "story", "source": "placeholder", "index": 2},
+				{"url": "https://placehold.co/800x450?text=Story+Image+3", "type": "story", "source": "placeholder", "index": 3},
+			}
 		}
 
-		// Generate images and reactions
-		media := gin.H{
+		c.JSON(http.StatusOK, gin.H{
 			"images":    images,
 			"reactions": []interface{}{},
-		}
-
-		c.JSON(http.StatusOK, media)
+		})
 	}
 }
 

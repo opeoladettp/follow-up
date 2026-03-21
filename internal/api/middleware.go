@@ -68,10 +68,13 @@ func CORSMiddleware() gin.HandlerFunc {
 		origin := c.Request.Header.Get("Origin")
 		if allowedOrigins[origin] {
 			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+		} else if origin != "" {
+			// Unknown origin — reflect it back without credentials to allow public access
+			c.Header("Access-Control-Allow-Origin", origin)
 		} else {
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
-		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Role")
 		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 		c.Header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
