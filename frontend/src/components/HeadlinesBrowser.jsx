@@ -7,6 +7,7 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
   const [filteredHeadlines, setFilteredHeadlines] = useState([])
   const [loading, setLoading] = useState(!cachedHeadlines)
   const [selectedHeadline, setSelectedHeadline] = useState(null)
+  const [feeds, setFeeds] = useState([])
   
   // Filter states
   const [searchQuery, setSearchQuery] = useState('')
@@ -29,7 +30,17 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
     } else {
       loadHeadlines()
     }
+    loadFeeds()
   }, [cachedHeadlines])
+
+  const loadFeeds = async () => {
+    try {
+      const data = await api.getRSSFeeds()
+      setFeeds(data.feeds || [])
+    } catch (error) {
+      console.error('Failed to load feeds:', error)
+    }
+  }
 
   useEffect(() => {
     applyFilters()
@@ -126,8 +137,10 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
 
   const hasActiveFilters = searchQuery || selectedSource !== 'all' || dateFilter !== 'all' || sortBy !== 'date-desc'
 
-  // Get unique sources
-  const sources = ['all', ...new Set(headlines.map(h => h.source))]
+  // Get unique sources — from DB feeds + any sources in headlines
+  const headlineSources = new Set(headlines.map(h => h.source))
+  const feedSources = feeds.map(f => f.name)
+  const allSources = ['all', ...new Set([...feedSources, ...headlineSources])]
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-gray-900">
@@ -207,7 +220,7 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
                   onChange={(e) => setSelectedSource(e.target.value)}
                   className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 dark:focus:ring-white text-gray-900 dark:text-white"
                 >
-                  {sources.map(source => (
+                  {allSources.map(source => (
                     <option key={source} value={source}>
                       {source === 'all' ? 'All Sources' : source}
                     </option>
