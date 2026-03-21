@@ -3,6 +3,8 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,10 +51,28 @@ func RateLimitMiddleware(requestsPerSecond int) gin.HandlerFunc {
 
 // CORSMiddleware handles Cross-Origin Resource Sharing
 func CORSMiddleware() gin.HandlerFunc {
+	allowedOrigins := map[string]bool{
+		"https://www.app-followup.duckdns.org": true,
+		"http://localhost:4000":                true,
+		"http://localhost:3000":                true,
+	}
+
+	// Also allow any origin set via env var
+	if origin := os.Getenv("ALLOWED_ORIGINS"); origin != "" {
+		for _, o := range strings.Split(origin, ",") {
+			allowedOrigins[strings.TrimSpace(o)] = true
+		}
+	}
+
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if allowedOrigins[origin] {
+			c.Header("Access-Control-Allow-Origin", origin)
+		} else {
+			c.Header("Access-Control-Allow-Origin", "*")
+		}
 		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Role")
 		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {
