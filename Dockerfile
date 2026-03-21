@@ -1,6 +1,9 @@
 # Build stage
 FROM golang:1.23-alpine AS builder
 
+# Force cache bust
+ENV CACHE_BUST=1
+
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
