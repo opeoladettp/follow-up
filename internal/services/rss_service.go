@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"time"
@@ -10,14 +11,16 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	"github.com/sirupsen/logrus"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type RSSService struct {
-	db        *database.MongoDB
-	parser    *gofeed.Parser
-	rssFeeds  []string
-	feedsMap  map[string]string // URL -> Name mapping
+	db       *database.MongoDB
+	parser   *gofeed.Parser
+	rssFeeds []string // seed feeds from env (read-only fallback)
 }
 
 type Headline struct {
@@ -26,112 +29,211 @@ type Headline struct {
 	Description string    `json:"description"`
 	URL         string    `json:"url"`
 	Source      string    `json:"source"`
+	Category    string    `json:"category"`
 	PublishedAt time.Time `json:"published_at"`
 	ImageURL    string    `json:"image_url,omitempty"`
 }
 
 func NewRSSService(db *database.MongoDB, rssFeeds []string) *RSSService {
-	return &RSSService{
+	svc := &RSSService{
 		db:       db,
 		parser:   gofeed.NewParser(),
 		rssFeeds: rssFeeds,
-		feedsMap: make(map[string]string),
 	}
+	// Seed default feeds into DB if collection is empty
+	svc.seedDefaultFeeds()
+	return svc
 }
 
-// AddRSSFeed adds a new RSS feed to the service
-func (r *RSSService) AddRSSFeed(feedURL, feedName string) error {
-	// Add to feeds list if not already present
-	for _, existing := range r.rssFeeds {
-		if existing == feedURL {
-			return fmt.Errorf("feed already exists")
+func (r *RSSService) feedsCollection() *mongo.Collection {
+	return r.db.Database.Collection("rss_feeds")
+}
+
+// seedDefaultFeeds inserts env-configured feeds into DB if none exist yet
+func (r *RSSService) seedDefaultFeeds() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	count, err := r.feedsCollection().CountDocuments(ctx, bson.M{})
+	if err != nil || count > 0 {
+		return
+	}
+
+	for i, feedURL := range r.rssFeeds {
+		feed := models.RSSFeed{
+			ID:        primitive.NewObjectID(),
+			Name:      fmt.Sprintf("Feed %d", i+1),
+			URL:       feedURL,
+			Category:  "General",
+			Active:    true,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
+		_, _ = r.feedsCollection().InsertOne(ctx, feed)
 	}
+	logrus.Infof("Seeded %d default RSS feeds into DB", len(r.rssFeeds))
+}
 
-	// Try to validate the feed (but don't fail if it's temporarily unavailable)
-	_, err := r.parser.ParseURL(feedURL)
+// GetRSSFeeds returns all feeds from MongoDB
+func (r *RSSService) GetRSSFeeds() ([]models.RSSFeed, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := r.feedsCollection().Find(ctx, bson.M{}, options.Find().SetSort(bson.M{"created_at": 1}))
 	if err != nil {
-		logrus.WithError(err).WithField("feed_url", feedURL).Warn("Feed validation failed, but adding anyway")
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var feeds []models.RSSFeed
+	if err = cursor.All(ctx, &feeds); err != nil {
+		return nil, err
+	}
+	return feeds, nil
+}
+
+// AddRSSFeed persists a new feed to MongoDB
+func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSSFeed, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Check duplicate
+	var existing models.RSSFeed
+	err := r.feedsCollection().FindOne(ctx, bson.M{"url": feedURL}).Decode(&existing)
+	if err == nil {
+		return nil, fmt.Errorf("feed already exists")
 	}
 
-	r.rssFeeds = append(r.rssFeeds, feedURL)
-	r.feedsMap[feedURL] = feedName
+	if category == "" {
+		category = "General"
+	}
 
-	logrus.WithFields(logrus.Fields{
-		"feed_url":  feedURL,
-		"feed_name": feedName,
-	}).Info("RSS feed added")
+	feed := models.RSSFeed{
+		ID:        primitive.NewObjectID(),
+		Name:      feedName,
+		URL:       feedURL,
+		Category:  category,
+		Active:    true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
 
+	_, err = r.feedsCollection().InsertOne(ctx, feed)
+	if err != nil {
+		return nil, err
+	}
+
+	logrus.WithFields(logrus.Fields{"url": feedURL, "name": feedName}).Info("RSS feed added")
+	return &feed, nil
+}
+
+// UpdateRSSFeed updates name/category/active for a feed
+func (r *RSSService) UpdateRSSFeed(feedID, name, category string, active *bool) (*models.RSSFeed, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(feedID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid feed ID")
+	}
+
+	update := bson.M{"updated_at": time.Now()}
+	if name != "" {
+		update["name"] = name
+	}
+	if category != "" {
+		update["category"] = category
+	}
+	if active != nil {
+		update["active"] = *active
+	}
+
+	after := options.After
+	var updated models.RSSFeed
+	err = r.feedsCollection().FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": objID},
+		bson.M{"$set": update},
+		options.FindOneAndUpdate().SetReturnDocument(after),
+	).Decode(&updated)
+	if err != nil {
+		return nil, fmt.Errorf("feed not found")
+	}
+
+	return &updated, nil
+}
+
+// DeleteRSSFeed removes a feed from MongoDB
+func (r *RSSService) DeleteRSSFeed(feedID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	objID, err := primitive.ObjectIDFromHex(feedID)
+	if err != nil {
+		return fmt.Errorf("invalid feed ID")
+	}
+
+	result, err := r.feedsCollection().DeleteOne(ctx, bson.M{"_id": objID})
+	if err != nil {
+		return err
+	}
+	if result.DeletedCount == 0 {
+		return fmt.Errorf("feed not found")
+	}
 	return nil
 }
 
-// GetRSSFeeds returns all configured RSS feeds
-func (r *RSSService) GetRSSFeeds() []map[string]interface{} {
-	feeds := make([]map[string]interface{}, 0, len(r.rssFeeds))
-	for i, url := range r.rssFeeds {
-		name := r.feedsMap[url]
-		if name == "" {
-			name = url
-		}
-		feeds = append(feeds, map[string]interface{}{
-			"id":       fmt.Sprintf("feed-%d", i),
-			"url":      url,
-			"name":     name,
-			"category": "General", // Default category
-		})
-	}
-	return feeds
-}
-
-// RemoveRSSFeed removes an RSS feed from the service
-func (r *RSSService) RemoveRSSFeed(feedURL string) error {
-	for i, url := range r.rssFeeds {
-		if url == feedURL {
-			r.rssFeeds = append(r.rssFeeds[:i], r.rssFeeds[i+1:]...)
-			delete(r.feedsMap, feedURL)
-			logrus.WithField("feed_url", feedURL).Info("RSS feed removed")
-			return nil
-		}
-	}
-	return fmt.Errorf("feed not found")
-}
-
-// FetchAllHeadlines fetches headlines from all configured RSS feeds
+// FetchAllHeadlines fetches from all active DB feeds
 func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
-	var allHeadlines []Headline
+	feeds, err := r.GetRSSFeeds()
+	if err != nil || len(feeds) == 0 {
+		// Fallback to env feeds
+		return r.fetchFromURLs(r.rssFeeds, map[string]string{})
+	}
 
-	for _, feedURL := range r.rssFeeds {
-		headlines, err := r.fetchHeadlinesFromFeed(feedURL)
+	urls := make([]string, 0, len(feeds))
+	categories := make(map[string]string)
+	for _, f := range feeds {
+		if f.Active {
+			urls = append(urls, f.URL)
+			categories[f.URL] = f.Category
+		}
+	}
+	return r.fetchFromURLs(urls, categories)
+}
+
+func (r *RSSService) fetchFromURLs(urls []string, categories map[string]string) ([]Headline, error) {
+	var allHeadlines []Headline
+	for _, feedURL := range urls {
+		headlines, err := r.fetchHeadlinesFromFeed(feedURL, categories[feedURL])
 		if err != nil {
 			logrus.WithError(err).WithField("feed", feedURL).Error("Failed to fetch headlines")
 			continue
 		}
 		allHeadlines = append(allHeadlines, headlines...)
 	}
-
 	logrus.WithField("count", len(allHeadlines)).Info("Fetched RSS headlines")
 	return allHeadlines, nil
 }
 
 // FetchHeadlinesBySource fetches headlines from a specific source
 func (r *RSSService) FetchHeadlinesBySource(source string) ([]Headline, error) {
-	// Find the feed URL for this source
-	var feedURL string
-	for _, url := range r.rssFeeds {
-		if contains(url, source) {
-			feedURL = url
-			break
+	feeds, _ := r.GetRSSFeeds()
+	for _, f := range feeds {
+		if contains(f.URL, source) || contains(f.Name, source) {
+			return r.fetchHeadlinesFromFeed(f.URL, f.Category)
 		}
 	}
-
-	if feedURL == "" {
-		return nil, fmt.Errorf("source not found: %s", source)
+	// Fallback to env feeds
+	for _, url := range r.rssFeeds {
+		if contains(url, source) {
+			return r.fetchHeadlinesFromFeed(url, "")
+		}
 	}
-
-	return r.fetchHeadlinesFromFeed(feedURL)
+	return nil, fmt.Errorf("source not found: %s", source)
 }
 
-func (r *RSSService) fetchHeadlinesFromFeed(feedURL string) ([]Headline, error) {
+func (r *RSSService) fetchHeadlinesFromFeed(feedURL, category string) ([]Headline, error) {
 	feed, err := r.parser.ParseURL(feedURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse feed: %w", err)
@@ -145,19 +247,16 @@ func (r *RSSService) fetchHeadlinesFromFeed(feedURL string) ([]Headline, error) 
 			Description: html.UnescapeString(item.Description),
 			URL:         item.Link,
 			Source:      html.UnescapeString(feed.Title),
+			Category:    category,
 		}
-
 		if item.PublishedParsed != nil {
 			headline.PublishedAt = *item.PublishedParsed
 		}
-
 		if item.Image != nil {
 			headline.ImageURL = item.Image.URL
 		}
-
 		headlines = append(headlines, headline)
 	}
-
 	return headlines, nil
 }
 
@@ -179,7 +278,6 @@ func (r *RSSService) SaveReport(headlineID, title, script, author string) (strin
 		return "", fmt.Errorf("failed to save report: %w", err)
 	}
 
-	// Also create a Story entry so it appears in the sidebar
 	story := models.Story{
 		ID:          primitive.NewObjectID(),
 		Title:       title,
@@ -187,11 +285,7 @@ func (r *RSSService) SaveReport(headlineID, title, script, author string) (strin
 		Category:    "news-report",
 		Tags:        []string{"rss", "correspondent"},
 		Sources: []models.Source{
-			{
-				Type: "rss",
-				URL:  headlineID,
-				Name: author,
-			},
+			{Type: "rss", URL: headlineID, Name: author},
 		},
 		Status:    "active",
 		CreatedAt: time.Now(),
@@ -201,21 +295,12 @@ func (r *RSSService) SaveReport(headlineID, title, script, author string) (strin
 	_, err = r.db.Stories().InsertOne(nil, story)
 	if err != nil {
 		logrus.WithError(err).Warn("Failed to create Story entry, but report was saved")
-		// Don't fail the entire operation if Story creation fails
 	}
-
-	logrus.WithFields(logrus.Fields{
-		"report_id": report.ID.Hex(),
-		"story_id":  story.ID.Hex(),
-		"author":    author,
-		"title":     title,
-	}).Info("News report saved with Story entry")
 
 	return report.ID.Hex(), nil
 }
 
 func generateHeadlineID(item *gofeed.Item) string {
-	// Generate a unique ID from the item's link or GUID
 	if item.GUID != "" {
 		return item.GUID
 	}
@@ -223,12 +308,11 @@ func generateHeadlineID(item *gofeed.Item) string {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr || 
-	       len(s) > len(substr) && s[len(s)-len(substr):] == substr ||
-	       false
+	return len(s) >= len(substr) && (s == substr ||
+		(len(substr) > 0 && len(s) > 0 &&
+			(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr)))
 }
 
-// UpdateReportVideoStatus updates the video generation status for a report
 func (r *RSSService) UpdateReportVideoStatus(reportID, videoJobID, status, videoURL string) error {
 	objID, err := primitive.ObjectIDFromHex(reportID)
 	if err != nil {
@@ -240,7 +324,6 @@ func (r *RSSService) UpdateReportVideoStatus(reportID, videoJobID, status, video
 		"video_status": status,
 		"updated_at":   time.Now(),
 	}
-
 	if videoURL != "" {
 		update["video_url"] = videoURL
 	}
@@ -250,21 +333,9 @@ func (r *RSSService) UpdateReportVideoStatus(reportID, videoJobID, status, video
 		map[string]interface{}{"_id": objID},
 		map[string]interface{}{"$set": update},
 	)
-
-	if err != nil {
-		return fmt.Errorf("failed to update report: %w", err)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"report_id":    reportID,
-		"video_job_id": videoJobID,
-		"status":       status,
-	}).Info("Report video status updated")
-
-	return nil
+	return err
 }
 
-// GetReportStatus retrieves the current status of a report including video generation
 func (r *RSSService) GetReportStatus(reportID string) (*models.NewsReport, error) {
 	objID, err := primitive.ObjectIDFromHex(reportID)
 	if err != nil {
@@ -276,6 +347,5 @@ func (r *RSSService) GetReportStatus(reportID string) (*models.NewsReport, error
 	if err != nil {
 		return nil, fmt.Errorf("report not found: %w", err)
 	}
-
 	return &report, nil
 }

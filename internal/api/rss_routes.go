@@ -212,11 +212,12 @@ func generateVideo(aiService *services.AIService, rssService *services.RSSServic
 
 func getRSSFeeds(rssService *services.RSSService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		feeds := rssService.GetRSSFeeds()
-		c.JSON(http.StatusOK, gin.H{
-			"feeds": feeds,
-			"count": len(feeds),
-		})
+		feeds, err := rssService.GetRSSFeeds()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"feeds": feeds, "count": len(feeds)})
 	}
 }
 
@@ -232,19 +233,13 @@ func addRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
 			return
 		}
 
-		err := rssService.AddRSSFeed(request.FeedURL, request.FeedName)
+		_, err := rssService.AddRSSFeed(request.FeedURL, request.FeedName, "")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
-			"message": "RSS feed added successfully",
-			"feed": gin.H{
-				"url":  request.FeedURL,
-				"name": request.FeedName,
-			},
-		})
+		c.JSON(http.StatusOK, gin.H{"message": "RSS feed added successfully"})
 	}
 }
 
@@ -259,15 +254,23 @@ func removeRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
 			return
 		}
 
-		err := rssService.RemoveRSSFeed(request.FeedURL)
+		// Find by URL and delete
+		feeds, err := rssService.GetRSSFeeds()
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message": "RSS feed removed successfully",
-		})
+		for _, f := range feeds {
+			if f.URL == request.FeedURL {
+				if err := rssService.DeleteRSSFeed(f.ID.Hex()); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"message": "RSS feed removed successfully"})
+				return
+			}
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "feed not found"})
 	}
 }
 
@@ -320,48 +323,11 @@ func getReportStatus(rssService *services.RSSService) gin.HandlerFunc {
 	}
 }
 
-// New feed management endpoints with proper structure
 func addRSSFeedNew(rssService *services.RSSService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var request struct {
 			Name     string `json:"name" binding:"required"`
 			URL      string `json:"url" binding:"required"`
-			Category string `json:"category" binding:"required"`
-		}
-
-		if err := c.ShouldBindJSON(&request); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		// In production, get user ID from auth context
-		userID := c.GetHeader("X-User-ID")
-
-		err := rssService.AddRSSFeed(request.URL, request.Name)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message": "RSS feed added successfully",
-			"feed": gin.H{
-				"name":     request.Name,
-				"url":      request.URL,
-				"category": request.Category,
-				"added_by": userID,
-			},
-		})
-	}
-}
-
-func updateRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		feedID := c.Param("id")
-		
-		var request struct {
-			Name     string `json:"name"`
-			URL      string `json:"url"`
 			Category string `json:"category"`
 		}
 
@@ -370,12 +336,38 @@ func updateRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
 			return
 		}
 
-		// For now, just return success
-		// In production, implement actual update logic in RSSService
-		c.JSON(http.StatusOK, gin.H{
-			"message": "RSS feed updated successfully",
-			"feed_id": feedID,
-		})
+		feed, err := rssService.AddRSSFeed(request.URL, request.Name, request.Category)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "RSS feed added successfully", "feed": feed})
+	}
+}
+
+func updateRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		feedID := c.Param("id")
+
+		var request struct {
+			Name     string `json:"name"`
+			Category string `json:"category"`
+			Active   *bool  `json:"active"`
+		}
+
+		if err := c.ShouldBindJSON(&request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		feed, err := rssService.UpdateRSSFeed(feedID, request.Name, request.Category, request.Active)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "RSS feed updated successfully", "feed": feed})
 	}
 }
 
@@ -383,12 +375,12 @@ func deleteRSSFeed(rssService *services.RSSService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		feedID := c.Param("id")
 
-		// For now, just return success
-		// In production, implement actual delete logic in RSSService
-		c.JSON(http.StatusOK, gin.H{
-			"message": "RSS feed deleted successfully",
-			"feed_id": feedID,
-		})
+		if err := rssService.DeleteRSSFeed(feedID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "RSS feed deleted successfully"})
 	}
 }
 
