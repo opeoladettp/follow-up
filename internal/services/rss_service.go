@@ -64,6 +64,9 @@ func (r *RSSService) seedDefaultFeeds() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Remove any legacy in-memory style feeds (id like "feed-0", "feed-1")
+	_, _ = r.col().DeleteMany(ctx, bson.M{"_id": bson.M{"$type": "string"}})
+
 	count, err := r.col().CountDocuments(ctx, bson.M{})
 	if err != nil || count > 0 {
 		return
@@ -136,6 +139,9 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Convert X.com/Twitter handles to Nitter RSS
+	feedURL = normalizeToRSSURL(feedURL)
+
 	var existing models.RSSFeed
 	if err := r.col().FindOne(ctx, bson.M{"url": feedURL}).Decode(&existing); err == nil {
 		return nil, fmt.Errorf("feed already exists")
@@ -162,6 +168,31 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	r.invalidateCaches()
 	logrus.WithFields(logrus.Fields{"url": feedURL, "name": feedName}).Info("RSS feed added")
 	return &feed, nil
+}
+
+// normalizeToRSSURL converts X/Twitter handles and profile URLs to Nitter RSS feeds
+func normalizeToRSSURL(input string) string {
+	input = strings.TrimSpace(input)
+
+	// Already a proper RSS URL
+	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
+		// Convert twitter.com or x.com profile URLs to Nitter RSS
+		if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
+			parts := strings.Split(strings.TrimRight(input, "/"), "/")
+			handle := parts[len(parts)-1]
+			return "https://nitter.net/" + handle + "/rss"
+		}
+		return input
+	}
+
+	// @handle or plain handle → Nitter RSS
+	handle := strings.TrimPrefix(input, "@")
+	if !strings.Contains(handle, ".") {
+		return "https://nitter.net/" + handle + "/rss"
+	}
+
+	// Bare domain without scheme
+	return "https://" + input
 }
 
 // UpdateRSSFeed updates a feed by ID and invalidates cache

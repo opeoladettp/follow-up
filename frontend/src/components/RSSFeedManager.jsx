@@ -47,7 +47,6 @@ export default function RSSFeedManager({ user }) {
 
   const handleDelete = async (id) => {
     if (!confirm('Are you sure you want to delete this feed?')) return
-    
     try {
       await api.deleteRSSFeed(id)
       await loadFeeds()
@@ -58,11 +57,11 @@ export default function RSSFeedManager({ user }) {
   }
 
   const handleEdit = (feed) => {
-    setEditingId(feed.id)
+    setEditingId(feed.id || feed._id)
     setFormData({
       name: feed.name,
       url: feed.url,
-      category: feed.category
+      category: feed.category || ''
     })
     setShowAddForm(true)
   }
@@ -129,16 +128,17 @@ export default function RSSFeedManager({ user }) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Feed URL
+                  Feed URL or X/Twitter Handle
                 </label>
                 <input
-                  type="url"
+                  type="text"
                   value={formData.url}
                   onChange={(e) => setFormData({ ...formData, url: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:border-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400"
-                  placeholder="https://feeds.bbci.co.uk/news/rss.xml"
+                  placeholder="https://feeds.bbci.co.uk/... or @BBCBreaking"
                   required
                 />
+                <p className="text-xs text-gray-400 mt-1">Enter an RSS URL or an X/Twitter handle (e.g. @BBCBreaking)</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -204,7 +204,7 @@ export default function RSSFeedManager({ user }) {
                       <Edit2 className="w-4 h-4 text-gray-600 dark:text-gray-400" />
                     </button>
                     <button
-                      onClick={() => handleDelete(feed.id)}
+                      onClick={() => handleDelete(feed.id || feed._id)}
                       className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                       title="Delete"
                     >
