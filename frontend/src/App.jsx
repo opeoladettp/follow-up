@@ -6,6 +6,7 @@ import StoryPanel from './components/StoryPanel'
 import HeadlinesBrowser from './components/HeadlinesBrowser'
 import ReportEditor from './components/ReportEditor'
 import RSSFeedManager from './components/RSSFeedManager'
+import AdminPanel from './components/AdminPanel'
 import { api } from './services/api'
 import './styles/brand.css'
 
@@ -15,7 +16,7 @@ function App() {
   const [selectedStory, setSelectedStory] = useState(null)
   const [loading, setLoading] = useState(true)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [mode, setMode] = useState('chat') // 'chat', 'headlines', 'editor', 'followup', 'rss-manager'
+  const [mode, setMode] = useState('chat') // 'chat', 'headlines', 'editor', 'followup', 'rss-manager', 'admin'
   const [selectedHeadline, setSelectedHeadline] = useState(null)
   const [headlinesCache, setHeadlinesCache] = useState(null)
   const [headlinesLoading, setHeadlinesLoading] = useState(false)
@@ -139,6 +140,10 @@ function App() {
     setMode('rss-manager')
   }
 
+  const handleManageUsers = () => {
+    setMode('admin')
+  }
+
   // Show login screen if not authenticated
   if (!user) {
     return <GoogleAuth onLoginSuccess={handleLoginSuccess} />
@@ -154,6 +159,7 @@ function App() {
         onNewStory={handleNewStory}
         onBrowseHeadlines={handleBrowseHeadlines}
         onFollowUpStories={handleFollowUpStories}
+        onManageUsers={handleManageUsers}
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         loading={loading}
@@ -173,7 +179,17 @@ function App() {
             {mode === 'editor' && 'Report Editor'}
             {mode === 'followup' && 'Follow-up Stories'}
             {mode === 'rss-manager' && 'RSS Feed Management'}
+            {mode === 'admin' && 'User Management'}
           </h2>
+          
+          {user.role === 'admin' && mode !== 'admin' && (
+            <button
+              onClick={handleManageUsers}
+              className="px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
+            >
+              Manage Users
+            </button>
+          )}
           
           {(user.role === 'editor' || user.role === 'admin') && mode === 'headlines' && (
             <button
@@ -225,6 +241,8 @@ function App() {
             </div>
           ) : mode === 'rss-manager' ? (
             <RSSFeedManager user={user} />
+          ) : mode === 'admin' ? (
+            <AdminPanel />
           ) : (
             <ChatInterface
               onCreateStory={handleCreateStory}

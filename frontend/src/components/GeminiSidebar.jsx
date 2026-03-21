@@ -20,6 +20,7 @@ export default function GeminiSidebar({
   onNewStory, 
   onBrowseHeadlines,
   onFollowUpStories,
+  onManageUsers,
   isOpen, 
   onToggle, 
   loading, 
@@ -126,6 +127,21 @@ export default function GeminiSidebar({
               <Clock className="w-5 h-5" />
               <span>Follow-up stories</span>
             </a>
+
+            {user?.role === 'admin' && (
+              <a
+                href="#"
+                onClick={(e) => { e.preventDefault(); onManageUsers(); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                  currentMode === 'admin'
+                    ? 'bg-red-600 text-white font-medium shadow-md'
+                    : 'text-gray-700 dark:text-gray-300 hover:text-white hover:bg-red-600'
+                }`}
+              >
+                <Shield className="w-5 h-5" />
+                <span>Manage Users</span>
+              </a>
+            )}
           </div>
         )}
 
