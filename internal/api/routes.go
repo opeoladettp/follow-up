@@ -14,8 +14,8 @@ func SetupRoutes(router *gin.RouterGroup, storyService *services.StoryService, d
 	// Story management routes
 	stories := router.Group("/stories")
 	{
-		stories.GET("/", getActiveStories(storyService))
-		stories.POST("/", createStory(storyService))
+		stories.GET("", getActiveStories(storyService))
+		stories.POST("", createStory(storyService))
 		stories.GET("/:id/context", getStoryContext(storyService))
 		stories.GET("/:id/diff-stats", getStoryDiffStats(diffEngine))
 	}
