@@ -166,7 +166,7 @@ export default function GeminiSidebar({
                     onClick={() => onSelectStory(story)}
                     className={`
                       w-full text-left px-2 py-1 transition-all text-xs truncate
-                      ${selectedStory?._id === story._id || selectedStory?.id === story.id
+                      ${(selectedStory?.id && selectedStory.id === story.id)
                         ? 'text-brand-primary font-medium'
                         : 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
                       }
