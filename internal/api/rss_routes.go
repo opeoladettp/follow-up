@@ -57,6 +57,9 @@ func SetupRSSRoutes(router *gin.RouterGroup, rssService *services.RSSService, ai
 		
 		// Get report status (including video generation status)
 		rss.GET("/report-status/:report_id", getReportStatus(rssService))
+
+		// Get report by story title (for StoryPanel media lookup)
+		rss.GET("/report-by-title", getReportByTitle(rssService))
 	}
 }
 
@@ -125,10 +128,11 @@ func generateNewsReport(rssService *services.RSSService, aiService *services.AIS
 func saveReport(rssService *services.RSSService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var request struct {
-			HeadlineID string `json:"headline_id" binding:"required"`
-			Title      string `json:"title" binding:"required"`
-			Script     string `json:"script" binding:"required"`
-			Author     string `json:"author"`
+			HeadlineID string                   `json:"headline_id" binding:"required"`
+			Title      string                   `json:"title" binding:"required"`
+			Script     string                   `json:"script" binding:"required"`
+			Author     string                   `json:"author"`
+			Images     []map[string]interface{} `json:"images"`
 		}
 
 		if err := c.ShouldBindJSON(&request); err != nil {
@@ -136,7 +140,7 @@ func saveReport(rssService *services.RSSService) gin.HandlerFunc {
 			return
 		}
 
-		reportID, err := rssService.SaveReport(request.HeadlineID, request.Title, request.Script, request.Author)
+		reportID, err := rssService.SaveReportWithMedia(request.HeadlineID, request.Title, request.Script, request.Author, request.Images)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -496,6 +500,22 @@ func cloneVoice(aiService *services.AIService) gin.HandlerFunc {
 			"audio_url": audioURL,
 			"message":   "Voice cloned and audio generated successfully",
 		})
+	}
+}
+
+func getReportByTitle(rssService *services.RSSService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		title := c.Query("title")
+		if title == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "title query param required"})
+			return
+		}
+		report, err := rssService.GetReportByTitle(title)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, report)
 	}
 }
 

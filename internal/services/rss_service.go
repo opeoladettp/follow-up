@@ -367,12 +367,18 @@ func (r *RSSService) fetchHeadlinesFromFeed(feedURL, category string) ([]Headlin
 
 // SaveReport saves a report and creates a Story entry
 func (r *RSSService) SaveReport(headlineID, title, script, author string) (string, error) {
+	return r.SaveReportWithMedia(headlineID, title, script, author, nil)
+}
+
+// SaveReportWithMedia saves a report with optional images and creates a Story entry
+func (r *RSSService) SaveReportWithMedia(headlineID, title, script, author string, images []map[string]interface{}) (string, error) {
 	report := models.NewsReport{
 		ID:         primitive.NewObjectID(),
 		HeadlineID: headlineID,
 		Title:      title,
 		Script:     script,
 		Author:     author,
+		Images:     images,
 		Status:     "draft",
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -398,6 +404,20 @@ func (r *RSSService) SaveReport(headlineID, title, script, author string) (strin
 	}
 
 	return report.ID.Hex(), nil
+}
+
+// GetReportByTitle finds the most recent NewsReport matching a title
+func (r *RSSService) GetReportByTitle(title string) (*models.NewsReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	opts := options.FindOne().SetSort(bson.M{"created_at": -1})
+	var report models.NewsReport
+	err := r.db.NewsReports().FindOne(ctx, bson.M{"title": title}, opts).Decode(&report)
+	if err != nil {
+		return nil, fmt.Errorf("report not found: %w", err)
+	}
+	return &report, nil
 }
 
 func (r *RSSService) UpdateReportVideoStatus(reportID, videoJobID, status, videoURL string) error {

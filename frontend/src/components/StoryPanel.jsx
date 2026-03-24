@@ -1,11 +1,32 @@
-import { X, Calendar, ExternalLink, Clock, Video, FileText, Image as ImageIcon, Play } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { X, Calendar, ExternalLink, Clock, Video, FileText, Image as ImageIcon, Play, Loader2 } from 'lucide-react'
 import { format } from 'date-fns'
+import { api } from '../services/api'
 
 export default function StoryPanel({ story, onClose }) {
+  const [report, setReport] = useState(null)
+  const [loadingReport, setLoadingReport] = useState(true)
+
   const developments = story.context?.developments || []
   const script = story.description || ''
-  const videoURL = story.video_url || story.context?.video_url || ''
-  const images = story.images || story.context?.images || []
+
+  useEffect(() => {
+    const fetchReport = async () => {
+      try {
+        setLoadingReport(true)
+        const data = await api.getReportByTitle(story.title)
+        setReport(data)
+      } catch {
+        // no linked report found — that's fine
+      } finally {
+        setLoadingReport(false)
+      }
+    }
+    if (story.title) fetchReport()
+  }, [story.title])
+
+  const videoURL = report?.video_url || ''
+  const images = report?.images || []
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-gray-900">
@@ -24,6 +45,9 @@ export default function StoryPanel({ story, onClose }) {
               )}
             </div>
             <h1 className="text-xl font-bold text-gray-900 dark:text-white">{story.title}</h1>
+            {report?.author && (
+              <p className="text-sm text-gray-500 mt-1">By {report.author}</p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -40,9 +64,8 @@ export default function StoryPanel({ story, onClose }) {
         {/* Full Script */}
         {script && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Script
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <FileText className="w-4 h-4" /> Script
             </h2>
             <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
               {script}
@@ -50,12 +73,19 @@ export default function StoryPanel({ story, onClose }) {
           </section>
         )}
 
+        {/* Media loading indicator */}
+        {loadingReport && (
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Loading media assets...
+          </div>
+        )}
+
         {/* Video */}
         {videoURL && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Play className="w-4 h-4" />
-              Generated Video
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Play className="w-4 h-4" /> Generated Video
             </h2>
             <video
               src={videoURL}
@@ -68,18 +98,18 @@ export default function StoryPanel({ story, onClose }) {
         {/* Images */}
         {images.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <ImageIcon className="w-4 h-4" />
-              Story Images
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <ImageIcon className="w-4 h-4" /> Story Images
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {images.map((img, i) => (
-                <img
-                  key={i}
-                  src={img.url || img}
-                  alt={`Story image ${i + 1}`}
-                  className="w-full h-36 object-cover rounded-lg border border-gray-200 dark:border-gray-700"
-                />
+                <a key={i} href={img.url || img} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={img.url || img}
+                    alt={`Story image ${i + 1}`}
+                    className="w-full h-36 object-cover rounded-lg border border-gray-200 dark:border-gray-700 hover:opacity-90 transition-opacity"
+                  />
+                </a>
               ))}
             </div>
           </section>
@@ -88,13 +118,12 @@ export default function StoryPanel({ story, onClose }) {
         {/* Timeline */}
         {developments.length > 0 && (
           <section>
-            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-3 flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              Timeline
+            <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Calendar className="w-4 h-4" /> Timeline
             </h2>
             <div className="space-y-4">
               {developments.map((dev, index) => (
-                <div key={dev.id || index} className="relative pl-8 pb-6 border-l-2 border-gray-200 dark:border-gray-700 last:border-l-0 last:pb-0">
+                <div key={dev.id || index} className="relative pl-6 pb-6 border-l-2 border-gray-200 dark:border-gray-700 last:border-l-0 last:pb-0">
                   <div className="absolute left-0 top-0 -translate-x-1/2 w-3 h-3 bg-brand-primary rounded-full border-2 border-white dark:border-gray-900" />
                   <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
                     <div className="flex items-center justify-between mb-1">
@@ -103,18 +132,16 @@ export default function StoryPanel({ story, onClose }) {
                       }`}>
                         {dev.type || 'Update'}
                       </span>
-                      <span className="text-xs text-gray-500">
-                        {dev.timestamp ? format(new Date(dev.timestamp), 'MMM d, h:mm a') : ''}
-                      </span>
+                      {dev.timestamp && (
+                        <span className="text-xs text-gray-500">
+                          {format(new Date(dev.timestamp), 'MMM d, h:mm a')}
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-800 dark:text-gray-200">{dev.content || dev.summary}</p>
                     {dev.source?.url && (
-                      <a
-                        href={dev.source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-brand-primary hover:underline mt-1"
-                      >
+                      <a href={dev.source.url} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-brand-primary hover:underline mt-1">
                         View source <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
@@ -125,8 +152,8 @@ export default function StoryPanel({ story, onClose }) {
           </section>
         )}
 
-        {/* Empty state */}
-        {!script && !videoURL && images.length === 0 && developments.length === 0 && (
+        {/* Empty state — only show after loading is done */}
+        {!loadingReport && !script && !videoURL && images.length === 0 && developments.length === 0 && (
           <div className="text-center py-16 text-gray-400">
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-40" />
             <p className="text-sm">No content available for this story</p>

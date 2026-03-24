@@ -134,8 +134,8 @@ export default function GeminiSidebar({
                 onClick={(e) => { e.preventDefault(); onManageUsers(); }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
                   currentMode === 'admin'
-                    ? 'bg-red-600 text-white font-medium shadow-md'
-                    : 'text-gray-700 dark:text-gray-300 hover:text-white hover:bg-red-600'
+                    ? 'bg-brand-primary text-white font-medium shadow-md'
+                    : 'text-gray-700 dark:text-gray-300 hover:text-white hover:bg-brand-primary'
                 }`}
               >
                 <Shield className="w-5 h-5" />
@@ -167,8 +167,8 @@ export default function GeminiSidebar({
                     className={`
                       w-full text-left px-2 py-1 transition-all text-xs truncate
                       ${selectedStory?._id === story._id || selectedStory?.id === story.id
-                        ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white font-medium'
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-900 dark:text-gray-300'
+                        ? 'text-brand-primary font-medium'
+                        : 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
                       }
                     `}
                     title={story.title}

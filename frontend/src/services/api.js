@@ -129,6 +129,11 @@ export const api = {
     return response.data
   },
 
+  getReportByTitle: async (title) => {
+    const response = await apiClient.get('/rss/report-by-title', { params: { title } })
+    return response.data
+  },
+
   generateVideo: async (data) => {
     const response = await apiClient.post('/rss/generate-video', data)
     return response.data

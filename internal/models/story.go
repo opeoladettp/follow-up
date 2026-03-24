@@ -76,16 +76,17 @@ type KPIMetrics struct {
 
 // NewsReport represents a correspondent's edited news report
 type NewsReport struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	HeadlineID  string             `bson:"headline_id" json:"headline_id"`
-	Title       string             `bson:"title" json:"title"`
-	Script      string             `bson:"script" json:"script"`
-	Author      string             `bson:"author" json:"author"`
-	AvatarURL   string             `bson:"avatar_url,omitempty" json:"avatar_url,omitempty"`
-	VideoJobID  string             `bson:"video_job_id,omitempty" json:"video_job_id,omitempty"`
-	VideoStatus string             `bson:"video_status,omitempty" json:"video_status,omitempty"` // processing, completed, failed
-	VideoURL    string             `bson:"video_url,omitempty" json:"video_url,omitempty"`
-	Status      string             `bson:"status" json:"status"` // draft, generating, completed
-	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
+	ID          primitive.ObjectID       `bson:"_id,omitempty" json:"id"`
+	HeadlineID  string                   `bson:"headline_id" json:"headline_id"`
+	Title       string                   `bson:"title" json:"title"`
+	Script      string                   `bson:"script" json:"script"`
+	Author      string                   `bson:"author" json:"author"`
+	AvatarURL   string                   `bson:"avatar_url,omitempty" json:"avatar_url,omitempty"`
+	VideoJobID  string                   `bson:"video_job_id,omitempty" json:"video_job_id,omitempty"`
+	VideoStatus string                   `bson:"video_status,omitempty" json:"video_status,omitempty"` // processing, completed, failed
+	VideoURL    string                   `bson:"video_url,omitempty" json:"video_url,omitempty"`
+	Images      []map[string]interface{} `bson:"images,omitempty" json:"images,omitempty"`
+	Status      string                   `bson:"status" json:"status"` // draft, generating, completed
+	CreatedAt   time.Time                `bson:"created_at" json:"created_at"`
+	UpdatedAt   time.Time                `bson:"updated_at" json:"updated_at"`
 }

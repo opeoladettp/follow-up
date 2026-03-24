@@ -247,7 +247,8 @@ export default function ReportEditor({ headline, onBack, user, onStoryCreated })
         headline_id: headline.id,
         title: headline.title,
         script: script,
-        author: author
+        author: author,
+        images: images.length > 0 ? images : undefined
       })
       setReportId(data.report_id)
       // Notify parent to refresh stories list
