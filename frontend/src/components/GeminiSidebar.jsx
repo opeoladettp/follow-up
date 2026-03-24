@@ -11,7 +11,6 @@ import {
   LogOut,
   Shield
 } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
 
 export default function GeminiSidebar({ 
   stories, 
@@ -165,7 +164,7 @@ export default function GeminiSidebar({
                     key={story._id || story.id}
                     onClick={() => onSelectStory(story)}
                     className={`
-                      w-full text-left px-2 py-1 transition-all text-xs truncate
+                      w-full text-left px-2 py-1 transition-all text-xs flex items-center gap-1 min-w-0
                       ${(selectedStory?.id && selectedStory.id === story.id)
                         ? 'text-brand-primary font-medium'
                         : 'text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
@@ -173,7 +172,12 @@ export default function GeminiSidebar({
                     `}
                     title={story.title}
                   >
-                    {story.title}
+                    <span className="truncate flex-1">{story.title}</span>
+                    {story.created_at && (
+                      <span className="flex-shrink-0 text-gray-400 dark:text-gray-500 text-[10px]">
+                        {new Date(story.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                      </span>
+                    )}
                   </button>
                 ))}
                 {loadingMore && (

@@ -12,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type StoryService struct {
@@ -140,11 +141,13 @@ func (s *StoryService) AddDevelopment(storyID string, development models.Develop
 	return nil
 }
 
-// GetActiveStories returns all active stories
+// GetActiveStories returns all active stories, newest first
 func (s *StoryService) GetActiveStories() ([]models.Story, error) {
+	opts := options.Find().SetSort(bson.M{"created_at": -1})
 	cursor, err := s.db.Stories().Find(
 		context.Background(),
 		bson.M{"status": "active"},
+		opts,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active stories: %w", err)
