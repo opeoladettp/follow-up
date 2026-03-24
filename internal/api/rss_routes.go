@@ -654,6 +654,16 @@ func proxyImage() gin.HandlerFunc {
 		}
 
 		c.Header("Cache-Control", "public, max-age=86400")
+
+		// If download=1 is set, force browser to download instead of open
+		if c.Query("download") == "1" {
+			filename := c.Query("filename")
+			if filename == "" {
+				filename = "story-image.jpg"
+			}
+			c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+		}
+
 		c.DataFromReader(resp.StatusCode, resp.ContentLength, contentType, resp.Body, nil)
 	}
 }

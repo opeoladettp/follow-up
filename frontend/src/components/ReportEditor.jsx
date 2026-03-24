@@ -289,17 +289,38 @@ export default function ReportEditor({ headline, onBack, user, onStoryCreated })
     }
   }
 
-  const handleDownloadImage = (image) => {
-    // Handle data URLs (base64 images)
-    if (image.url.startsWith('data:')) {
+  const handleDownloadImage = async (image) => {
+    try {
+      const filename = `story-image-${Date.now()}.jpg`
+      let downloadUrl
+
+      if (image.url.startsWith('data:')) {
+        // Base64 data URL — download directly
+        const link = document.createElement('a')
+        link.href = image.url
+        link.download = `${image.type || 'story'}-${Date.now()}.png`
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        return
+      }
+
+      // Proxy through backend with download flag so Content-Disposition is set
+      downloadUrl = `${BACKEND_URL}/api/v1/rss/proxy-image?url=${encodeURIComponent(image.url)}&download=1&filename=${encodeURIComponent(filename)}`
+
+      const resp = await fetch(downloadUrl)
+      const blob = await resp.blob()
+      const blobUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
-      link.href = image.url
-      link.download = `${image.type}-${Date.now()}.png`
+      link.href = blobUrl
+      link.download = filename
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-    } else {
-      // For regular URLs, open in new tab
+      URL.revokeObjectURL(blobUrl)
+    } catch (err) {
+      console.error('Download failed:', err)
+      // Last resort — open in new tab
       window.open(image.url, '_blank')
     }
   }
