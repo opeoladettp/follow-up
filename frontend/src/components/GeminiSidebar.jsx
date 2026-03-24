@@ -167,8 +167,8 @@ export default function GeminiSidebar({
                     className={`
                       w-full text-left px-2 py-1 transition-all text-xs truncate
                       ${selectedStory?._id === story._id || selectedStory?.id === story.id
-                        ? 'bg-brand-primary text-white' 
-                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                        ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white font-medium'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-900 dark:text-gray-300'
                       }
                     `}
                     title={story.title}

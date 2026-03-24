@@ -182,15 +182,6 @@ function App() {
             {mode === 'admin' && 'User Management'}
           </h2>
           
-          {user.role === 'admin' && mode !== 'admin' && (
-            <button
-              onClick={handleManageUsers}
-              className="px-3 sm:px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-            >
-              Manage Users
-            </button>
-          )}
-          
           {(user.role === 'editor' || user.role === 'admin') && mode === 'headlines' && (
             <button
               onClick={handleManageRSSFeeds}
