@@ -76,7 +76,7 @@ func CORSMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
 		c.Header("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-ID, X-User-Role")
-		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+		c.Header("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
 		c.Header("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
 
 		if c.Request.Method == "OPTIONS" {
