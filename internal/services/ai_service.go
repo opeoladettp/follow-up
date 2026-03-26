@@ -19,6 +19,7 @@ type AIService struct {
 	geminiClient     *GeminiClient
 	newsAPIKey       string
 	didService       *DIDService
+	heygenService    *HeyGenService
 	elevenLabsSvc    *ElevenLabsService
 	googleImageSvc   *GoogleImageService
 	imagenService    *GoogleImagenService
@@ -43,6 +44,14 @@ func (a *AIService) SetDIDService(didAPIKey string) {
 	if didAPIKey != "" {
 		a.didService = NewDIDService(didAPIKey)
 		logrus.Info("D-ID service configured for video generation")
+	}
+}
+
+// SetHeyGenService configures the HeyGen service for video generation
+func (a *AIService) SetHeyGenService(apiKey string) {
+	if apiKey != "" {
+		a.heygenService = NewHeyGenService(apiKey)
+		logrus.Info("HeyGen service configured for video generation")
 	}
 }
 
@@ -564,19 +573,31 @@ func (a *AIService) AnalyzeContent(content string, storyContext *models.StoryLif
 func (a *AIService) TriggerProductionPipeline(scriptText, identityImageURL, reportID, voiceAudioURL string) (string, error) {
 	startTime := time.Now()
 
+	// Prefer HeyGen (free trial, better quality)
+	if a.heygenService != nil {
+		logrus.WithField("report_id", reportID).Info("Using HeyGen for video generation")
+		videoID, err := a.heygenService.GenerateVideo(scriptText, "")
+		if err != nil {
+			logrus.WithError(err).Error("HeyGen video generation failed")
+			return "", fmt.Errorf("HeyGen video generation failed: %w", err)
+		}
+		logrus.WithFields(logrus.Fields{
+			"latency_ms": time.Since(startTime).Milliseconds(),
+			"video_id":   videoID,
+			"report_id":  reportID,
+		}).Info("HeyGen video job submitted")
+		return videoID, nil
+	}
+
+	// Fall back to D-ID if HeyGen not configured
 	if a.didService == nil {
-		logrus.Warn("D-ID not configured, using mock video generation")
+		logrus.Warn("No video service configured, using mock video generation")
 		return a.mockVideoGeneration()
 	}
 
-	// Use a natural-sounding news presenter voice
-	// en-US-AriaNeural has good prosody for news reading
 	voiceID := "en-US-AriaNeural"
-
-	// D-ID free tier has a ~1000 character script limit - truncate if needed
 	script := scriptText
 	if len(script) > 900 {
-		// Cut at last sentence boundary before 900 chars
 		script = script[:900]
 		if idx := strings.LastIndexAny(script, ".!?"); idx > 0 {
 			script = script[:idx+1]
@@ -584,131 +605,105 @@ func (a *AIService) TriggerProductionPipeline(scriptText, identityImageURL, repo
 		logrus.WithField("original_length", len(scriptText)).Warn("Script truncated to fit D-ID limit")
 	}
 
-	// If a cloned voice audio URL is provided, use it directly with D-ID
-	audioURL := voiceAudioURL
-
-	// If ElevenLabs is configured and a voice ID was stored, generate audio first
-	// (voiceAudioURL takes precedence - it's a pre-uploaded S3 URL of cloned voice audio)
-
 	logrus.WithFields(logrus.Fields{
-		"avatar_url":     identityImageURL,
-		"script_length":  len(scriptText),
-		"report_id":      reportID,
-		"has_audio_url":  audioURL != "",
+		"avatar_url":    identityImageURL,
+		"script_length": len(scriptText),
+		"report_id":     reportID,
 	}).Info("Calling D-ID API to generate video")
 
-	talkID, err := a.didService.GenerateVideo(script, identityImageURL, voiceID, audioURL)
+	talkID, err := a.didService.GenerateVideo(script, identityImageURL, voiceID, voiceAudioURL)
 	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"avatar_url": identityImageURL,
-			"report_id":  reportID,
-		}).Error("D-ID video generation failed - NOT falling back to mock")
 		return "", fmt.Errorf("D-ID video generation failed: %w", err)
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"latency_ms": time.Since(startTime).Milliseconds(),
 		"talk_id":    talkID,
-		"avatar_url": identityImageURL,
 		"report_id":  reportID,
-	}).Info("D-ID video generation initiated successfully")
+	}).Info("D-ID video generation initiated")
 
 	return talkID, nil
 }
 
 // CompleteVideoGeneration polls D-ID for video completion and uploads to S3
-func (a *AIService) CompleteVideoGeneration(reportID, talkID string, rssService interface{}) error {
-	// Check if this is a mock video job - handle without requiring D-ID or S3
-	if isMockVideoJob(talkID) {
-		logrus.WithField("talk_id", talkID).Info("Handling mock video completion")
+func (a *AIService) CompleteVideoGeneration(reportID, jobID string, rssService interface{}) error {
+	rs, ok := rssService.(*RSSService)
+	if !ok {
+		return fmt.Errorf("invalid rss service type")
+	}
+
+	// Mock job
+	if isMockVideoJob(jobID) {
+		logrus.WithField("job_id", jobID).Info("Handling mock video completion")
 		time.Sleep(10 * time.Second)
-
-		// Use a real sample video URL for mock so the player actually works
-		mockVideoURL := "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-
-		if rs, ok := rssService.(*RSSService); ok {
-			err := rs.UpdateReportVideoStatus(reportID, talkID, "completed", mockVideoURL)
-			if err != nil {
-				logrus.WithError(err).Error("Failed to update mock video status")
-			} else {
-				logrus.WithFields(logrus.Fields{
-					"report_id":    reportID,
-					"video_job_id": talkID,
-					"video_url":    mockVideoURL,
-				}).Info("Mock video marked as completed")
-			}
-		}
-		return nil
+		mockURL := "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+		return rs.UpdateReportVideoStatus(reportID, jobID, "completed", mockURL)
 	}
 
-	if a.didService == nil || a.s3Service == nil {
-		logrus.Warn("D-ID or S3 service not configured")
-		return fmt.Errorf("required services not configured")
-	}
-
-	// Poll D-ID for video completion (max 5 minutes)
-	maxAttempts := 60
-	attempt := 0
-
-	for attempt < maxAttempts {
-		videoStatus, err := a.didService.GetVideoStatus(talkID)
+	// HeyGen job — poll until done, then optionally upload to S3
+	if a.heygenService != nil {
+		logrus.WithField("video_id", jobID).Info("Polling HeyGen for video completion")
+		videoURL, err := a.heygenService.WaitForVideo(jobID)
 		if err != nil {
-			logrus.WithError(err).WithField("talk_id", talkID).Warn("Failed to check video status")
-			time.Sleep(5 * time.Second)
-			attempt++
-			continue
+			_ = rs.UpdateReportVideoStatus(reportID, jobID, "failed", "")
+			return err
+		}
+
+		// Upload to S3 if available, otherwise use HeyGen URL directly
+		finalURL := videoURL
+		if a.s3Service != nil {
+			s3Key := fmt.Sprintf("videos/%s/video.mp4", reportID)
+			uploaded, err := a.s3Service.DownloadAndUploadVideo(videoURL, s3Key)
+			if err != nil {
+				logrus.WithError(err).Warn("Failed to upload HeyGen video to S3, using HeyGen URL")
+			} else {
+				finalURL = uploaded
+			}
 		}
 
 		logrus.WithFields(logrus.Fields{
-			"talk_id": talkID,
-			"status":  videoStatus.Status,
-		}).Info("Video status check")
+			"report_id": reportID,
+			"video_url": finalURL,
+		}).Info("HeyGen video completed")
+		return rs.UpdateReportVideoStatus(reportID, jobID, "completed", finalURL)
+	}
+
+	// D-ID fallback
+	if a.didService == nil || a.s3Service == nil {
+		return fmt.Errorf("required services not configured")
+	}
+
+	maxAttempts := 60
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		videoStatus, err := a.didService.GetVideoStatus(jobID)
+		if err != nil {
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		logrus.WithFields(logrus.Fields{"talk_id": jobID, "status": videoStatus.Status}).Info("D-ID status check")
 
 		if videoStatus.Status == "done" || videoStatus.Status == "completed" {
-			// D-ID uses result_url or video_url depending on the endpoint version
 			resultURL := videoStatus.ResultURL
 			if resultURL == "" {
 				resultURL = videoStatus.VideoURL
 			}
-
-			logrus.WithFields(logrus.Fields{
-				"talk_id":    talkID,
-				"result_url": resultURL,
-			}).Info("D-ID video ready, uploading to S3")
-
 			if resultURL != "" {
 				s3Key := fmt.Sprintf("videos/%s/video.mp4", reportID)
 				videoURL, err := a.s3Service.DownloadAndUploadVideo(resultURL, s3Key)
 				if err != nil {
-					logrus.WithError(err).Error("Failed to upload video to S3, using D-ID URL directly")
 					videoURL = resultURL
 				}
-
-				if rs, ok := rssService.(*RSSService); ok {
-					err := rs.UpdateReportVideoStatus(reportID, talkID, "completed", videoURL)
-					if err != nil {
-						logrus.WithError(err).Error("Failed to update report video status")
-					} else {
-						logrus.WithFields(logrus.Fields{
-							"report_id":    reportID,
-							"video_job_id": talkID,
-							"video_url":    videoURL,
-						}).Info("Video generation completed and uploaded to S3")
-					}
-				}
+				return rs.UpdateReportVideoStatus(reportID, jobID, "completed", videoURL)
 			}
-			return nil
 		}
-
 		if videoStatus.Status == "failed" || videoStatus.Status == "error" {
-			return fmt.Errorf("video generation failed: %s", videoStatus.Status)
+			_ = rs.UpdateReportVideoStatus(reportID, jobID, "failed", "")
+			return fmt.Errorf("D-ID video generation failed")
 		}
-
 		time.Sleep(5 * time.Second)
-		attempt++
 	}
-
-	return fmt.Errorf("video generation timeout after %d attempts", maxAttempts)
+	return fmt.Errorf("video generation timeout")
 }
 
 // isMockVideoJob checks if a job ID is a mock video job

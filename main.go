@@ -56,6 +56,11 @@ func main() {
 		aiService.SetDIDService(didAPIKey)
 	}
 
+	// Configure HeyGen (preferred video generator)
+	if heygenKey := os.Getenv("HEYGEN_API_KEY"); heygenKey != "" {
+		aiService.SetHeyGenService(heygenKey)
+	}
+
 	// Configure ElevenLabs if API key is provided (for voice cloning)
 	if elKey := os.Getenv("ELEVENLABS_API_KEY"); elKey != "" {
 		aiService.SetElevenLabsService(elKey)
