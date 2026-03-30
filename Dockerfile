@@ -1,9 +1,8 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25.8-alpine AS builder
 
 # Force cache bust
 ENV CACHE_BUST=1
-ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
@@ -15,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build with optimisations: strip debug info, disable CGO
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=auto \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o main .
 
 # Final stage — minimal image
