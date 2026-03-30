@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"os"
 	"strings"
 	"time"
 
@@ -27,10 +28,11 @@ const (
 )
 
 type RSSService struct {
-	db        *database.MongoDB
-	redis     *database.Redis
-	parser    *gofeed.Parser
-	seedFeeds []string // env-configured seed URLs
+	db         *database.MongoDB
+	redis      *database.Redis
+	parser     *gofeed.Parser
+	seedFeeds  []string
+	twitterSvc *TwitterService
 }
 
 type Headline struct {
@@ -46,14 +48,16 @@ type Headline struct {
 
 func NewRSSService(db *database.MongoDB, redis *database.Redis, rssFeeds []string) *RSSService {
 	svc := &RSSService{
-		db:        db,
-		redis:     redis,
-		parser:    gofeed.NewParser(),
-		seedFeeds: rssFeeds,
+		db:         db,
+		redis:      redis,
+		parser:     gofeed.NewParser(),
+		seedFeeds:  rssFeeds,
+		twitterSvc: NewTwitterServiceFromEnv(),
 	}
 	svc.seedDefaultFeeds()
 	return svc
 }
+
 
 func (r *RSSService) col() *mongo.Collection {
 	return r.db.Database.Collection("rss_feeds")
@@ -178,35 +182,30 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	return &feed, nil
 }
 
-// normalizeToRSSURL converts X/Twitter handles and profile URLs to RSSHub feeds.
-// Returns an error for Twitter/X handles since public RSS proxies no longer work.
+// normalizeToRSSURL converts X/Twitter handles and profile URLs.
+// Twitter handles are prefixed with "twitter://" so the fetcher can route them to the Twitter API.
 func normalizeToRSSURL(input string) (string, error) {
 	input = strings.TrimSpace(input)
 
-	// Detect Twitter/X handles and URLs — these no longer work via public RSS
-	isTwitter := false
-	if strings.HasPrefix(input, "@") {
+	// @handle or bare handle (no dots = not a domain)
+	if strings.HasPrefix(input, "@") || (!strings.Contains(input, ".") && !strings.HasPrefix(input, "http") && input != "") {
 		handle := strings.TrimPrefix(input, "@")
-		if !strings.Contains(handle, ".") {
-			isTwitter = true
+		if handle != "" {
+			return "twitter://" + handle, nil
 		}
 	}
-	if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
-		isTwitter = true
-	}
-	if isTwitter {
-		return "", fmt.Errorf("Twitter/X RSS feeds are no longer supported — Nitter and RSSHub Twitter scraping shut down in 2024. Use a direct RSS feed URL instead")
-	}
 
-	// Already a proper RSS URL
+	// Already a proper URL
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
+		// Convert twitter.com or x.com profile URLs
+		if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
+			parts := strings.Split(strings.TrimRight(input, "/"), "/")
+			handle := parts[len(parts)-1]
+			if handle != "" {
+				return "twitter://" + handle, nil
+			}
+		}
 		return input, nil
-	}
-
-	// Plain handle with no dots — treat as unknown, reject
-	handle := strings.TrimPrefix(input, "@")
-	if !strings.Contains(handle, ".") && handle != "" {
-		return "", fmt.Errorf("'%s' looks like a social handle but Twitter/X RSS is not supported. Please provide a full RSS feed URL (e.g. https://example.com/feed)", input)
 	}
 
 	// Bare domain without scheme
@@ -326,6 +325,21 @@ func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
 func (r *RSSService) fetchFromURLs(urls []string, _ map[string]string) ([]Headline, error) {
 	var all []Headline
 	for _, feedURL := range urls {
+		// Twitter handles stored as twitter://username — use Twitter API directly
+		if strings.HasPrefix(feedURL, "twitter://") {
+			handle := strings.TrimPrefix(feedURL, "twitter://")
+			if r.twitterSvc != nil {
+				items, err := r.twitterSvc.FetchUserTimeline(handle)
+				if err != nil {
+					logrus.WithError(err).WithField("handle", handle).Warn("Failed to fetch Twitter timeline, skipping")
+					continue
+				}
+				all = append(all, items...)
+			} else {
+				logrus.WithField("handle", handle).Warn("Twitter handle in feeds but TWITTER_BEARER_TOKEN not set, skipping")
+			}
+			continue
+		}
 		items, err := r.fetchHeadlinesFromFeed(feedURL, "")
 		if err != nil {
 			logrus.WithError(err).WithField("feed", feedURL).Warn("Failed to fetch headlines from feed, skipping")
