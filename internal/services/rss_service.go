@@ -280,6 +280,10 @@ func (r *RSSService) invalidateCaches() {
 	_ = r.redis.InvalidateCache(cacheKeyFeeds)
 	_ = r.redis.InvalidateCache(cacheKeyHeadlines)
 }
+
+func (r *RSSService) InvalidateHeadlinesCache() {
+	_ = r.redis.InvalidateCache(cacheKeyHeadlines)
+}
 func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
 	// Try headlines cache
 	if cached, err := r.redis.GetCachedJSON(cacheKeyHeadlines); err == nil {
@@ -328,8 +332,19 @@ func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
 }
 
 func (r *RSSService) fetchFromURLs(urls []string, _ map[string]string) ([]Headline, error) {
+	rsshubBase := os.Getenv("RSSHUB_URL")
+	if rsshubBase == "" {
+		rsshubBase = "https://rsshub.app"
+	}
+	rsshubBase = strings.TrimRight(rsshubBase, "/")
+
 	var all []Headline
 	for _, feedURL := range urls {
+		// Convert legacy twitter:// scheme to RSSHub URL
+		if strings.HasPrefix(feedURL, "twitter://") {
+			handle := strings.TrimPrefix(feedURL, "twitter://")
+			feedURL = rsshubBase + "/twitter/user/" + handle
+		}
 		items, err := r.fetchHeadlinesFromFeed(feedURL, "")
 		if err != nil {
 			logrus.WithError(err).WithField("feed", feedURL).Warn("Failed to fetch headlines from feed, skipping")

@@ -64,6 +64,9 @@ func SetupRSSRoutes(router *gin.RouterGroup, rssService *services.RSSService, ai
 		// Get report by story title (for StoryPanel media lookup)
 		rss.GET("/report-by-title", getReportByTitle(rssService))
 
+		// Bust headlines cache (force refetch from all feeds)
+		rss.POST("/refresh-headlines", refreshHeadlines(rssService))
+
 		// Update images on an existing report (called after media generation)
 		rss.PATCH("/report/:id/images", updateReportImages(rssService))
 	}
@@ -587,6 +590,13 @@ func cloneVoice(aiService *services.AIService) gin.HandlerFunc {
 			"audio_url": audioURL,
 			"message":   "Voice cloned and audio generated successfully",
 		})
+	}
+}
+
+func refreshHeadlines(rssService *services.RSSService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rssService.InvalidateHeadlinesCache()
+		c.JSON(http.StatusOK, gin.H{"message": "Headlines cache cleared"})
 	}
 }
 
