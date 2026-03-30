@@ -67,6 +67,10 @@ func (r *RSSService) seedDefaultFeeds() {
 	// Remove any legacy in-memory style feeds (id like "feed-0", "feed-1")
 	_, _ = r.col().DeleteMany(ctx, bson.M{"_id": bson.M{"$type": "string"}})
 
+	// Remove broken Twitter/RSSHub feeds that will never work
+	_, _ = r.col().DeleteMany(ctx, bson.M{"url": bson.M{"$regex": "rsshub\\.app/twitter"}})
+	_, _ = r.col().DeleteMany(ctx, bson.M{"url": bson.M{"$regex": "nitter\\."}})
+
 	count, err := r.col().CountDocuments(ctx, bson.M{})
 	if err != nil || count > 0 {
 		return
@@ -140,7 +144,11 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	defer cancel()
 
 	// Convert X.com/Twitter handles to Nitter RSS
-	feedURL = normalizeToRSSURL(feedURL)
+	var err error
+	feedURL, err = normalizeToRSSURL(feedURL)
+	if err != nil {
+		return nil, err
+	}
 
 	var existing models.RSSFeed
 	if err := r.col().FindOne(ctx, bson.M{"url": feedURL}).Decode(&existing); err == nil {
@@ -170,29 +178,39 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	return &feed, nil
 }
 
-// normalizeToRSSURL converts X/Twitter handles and profile URLs to RSSHub feeds
-func normalizeToRSSURL(input string) string {
+// normalizeToRSSURL converts X/Twitter handles and profile URLs to RSSHub feeds.
+// Returns an error for Twitter/X handles since public RSS proxies no longer work.
+func normalizeToRSSURL(input string) (string, error) {
 	input = strings.TrimSpace(input)
+
+	// Detect Twitter/X handles and URLs — these no longer work via public RSS
+	isTwitter := false
+	if strings.HasPrefix(input, "@") {
+		handle := strings.TrimPrefix(input, "@")
+		if !strings.Contains(handle, ".") {
+			isTwitter = true
+		}
+	}
+	if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
+		isTwitter = true
+	}
+	if isTwitter {
+		return "", fmt.Errorf("Twitter/X RSS feeds are no longer supported — Nitter and RSSHub Twitter scraping shut down in 2024. Use a direct RSS feed URL instead")
+	}
 
 	// Already a proper RSS URL
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
-		// Convert twitter.com or x.com profile URLs to RSSHub
-		if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
-			parts := strings.Split(strings.TrimRight(input, "/"), "/")
-			handle := parts[len(parts)-1]
-			return "https://rsshub.app/twitter/user/" + handle
-		}
-		return input
+		return input, nil
 	}
 
-	// @handle or plain handle (no dots = not a domain)
+	// Plain handle with no dots — treat as unknown, reject
 	handle := strings.TrimPrefix(input, "@")
 	if !strings.Contains(handle, ".") && handle != "" {
-		return "https://rsshub.app/twitter/user/" + handle
+		return "", fmt.Errorf("'%s' looks like a social handle but Twitter/X RSS is not supported. Please provide a full RSS feed URL (e.g. https://example.com/feed)", input)
 	}
 
 	// Bare domain without scheme
-	return "https://" + input
+	return "https://" + input, nil
 }
 
 // UpdateRSSFeed updates a feed by ID and invalidates cache
@@ -258,8 +276,6 @@ func (r *RSSService) invalidateCaches() {
 	_ = r.redis.InvalidateCache(cacheKeyFeeds)
 	_ = r.redis.InvalidateCache(cacheKeyHeadlines)
 }
-
-// FetchAllHeadlines fetches from all active DB feeds, with Redis caching
 func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
 	// Try headlines cache
 	if cached, err := r.redis.GetCachedJSON(cacheKeyHeadlines); err == nil {
