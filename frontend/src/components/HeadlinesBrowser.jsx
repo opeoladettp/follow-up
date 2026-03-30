@@ -74,9 +74,21 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
       )
     }
 
-    // Source filter
+    // Source filter — match headline source against feed name (loose match for Twitter)
     if (selectedSource !== 'all') {
-      filtered = filtered.filter(h => h.source === selectedSource)
+      const feed = feeds.find(f => f.name === selectedSource)
+      filtered = filtered.filter(h => {
+        if (!feed) return h.source === selectedSource
+        // Direct name match
+        if (h.source === feed.name) return true
+        // Twitter: source contains the feed name or handle
+        const handle = feed.url.includes('/twitter/user/')
+          ? feed.url.split('/twitter/user/')[1]
+          : null
+        if (handle && h.source.toLowerCase().includes(handle.toLowerCase())) return true
+        // Fallback: source contains feed name
+        return h.source.toLowerCase().includes(feed.name.toLowerCase())
+      })
     }
 
     // Date filter
@@ -137,14 +149,14 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
 
   const hasActiveFilters = searchQuery || selectedSource !== 'all' || dateFilter !== 'all' || sortBy !== 'date-desc'
 
-  // Get unique sources — from DB feeds + any sources in headlines
-  const headlineSources = new Set(headlines.map(h => h.source))
-  const feedSources = feeds.map(f => 
-    f.url.startsWith('twitter://') 
-      ? '@' + f.url.replace('twitter://', '')  // show @handle for Twitter feeds
-      : f.name
-  )
-  const allSources = ['all', ...new Set([...feedSources, ...headlineSources])]
+  // Build source options from DB feeds only — use feed name as label
+  // Map: display label → match function against headline.source
+  const feedSourceOptions = feeds.map(f => ({
+    label: f.name,
+    // For Twitter feeds, match by handle; for RSS, match by feed name
+    value: f.name,
+  }))
+  const allSources = ['all', ...feedSourceOptions.map(f => f.label)]
 
   return (
     <div className="flex-1 flex flex-col h-full bg-white dark:bg-gray-900">

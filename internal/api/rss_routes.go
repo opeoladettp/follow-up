@@ -177,11 +177,10 @@ func generateVideo(aiService *services.AIService, rssService *services.RSSServic
 			return
 		}
 
-		// D-ID requires a public HTTPS URL ending in .jpg/.jpeg/.png
-		// UploadAvatarToS3 handles all cases: base64 data URLs, Google profile pics, etc.
-		avatarURL, err := aiService.UploadAvatarToS3(request.AvatarURL, request.ReportID)
+		// For HeyGen, skip S3 avatar upload — HeyGen uses its own stock avatars
+		avatarURL, err := aiService.PrepareAvatarURL(request.AvatarURL, request.ReportID)
 		if err != nil {
-			logrus.WithError(err).Error("Failed to process avatar for D-ID")
+			logrus.WithError(err).Error("Failed to process avatar")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process avatar image"})
 			return
 		}

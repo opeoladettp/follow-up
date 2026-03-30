@@ -94,6 +94,17 @@ func didValidImageURL(u string) bool {
 //  1. data: URLs (base64) → decode and upload to S3
 //  2. Remote URLs already ending in .jpg/.jpeg/.png → use as-is
 //  3. Remote URLs without valid extension (e.g. Google profile pics) → download and re-upload to S3 as .jpg
+// PrepareAvatarURL returns the avatar URL ready for the video provider.
+// For HeyGen, the avatar URL is not used (HeyGen uses stock avatars), so we return as-is.
+// For D-ID, we upload to S3 to get a clean public HTTPS URL.
+func (a *AIService) PrepareAvatarURL(avatarURL, reportID string) (string, error) {
+	if a.heygenService != nil {
+		// HeyGen uses its own stock avatars — no need to process the user's avatar
+		return avatarURL, nil
+	}
+	return a.UploadAvatarToS3(avatarURL, reportID)
+}
+
 func (a *AIService) UploadAvatarToS3(avatarURL, reportID string) (string, error) {
 	if a.s3Service == nil {
 		return avatarURL, nil
