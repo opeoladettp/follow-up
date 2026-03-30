@@ -27,11 +27,10 @@ const (
 )
 
 type RSSService struct {
-	db         *database.MongoDB
-	redis      *database.Redis
-	parser     *gofeed.Parser
-	seedFeeds  []string
-	twitterSvc *TwitterService
+	db        *database.MongoDB
+	redis     *database.Redis
+	parser    *gofeed.Parser
+	seedFeeds []string
 }
 
 type Headline struct {
@@ -181,30 +180,29 @@ func (r *RSSService) AddRSSFeed(feedURL, feedName, category string) (*models.RSS
 	return &feed, nil
 }
 
-// normalizeToRSSURL converts X/Twitter handles and profile URLs.
-// Twitter handles are prefixed with "twitter://" so the fetcher can route them to the Twitter API.
+// normalizeToRSSURL validates and normalises a feed URL.
+// Twitter/X handles are rejected — the API costs $200/month.
 func normalizeToRSSURL(input string) (string, error) {
 	input = strings.TrimSpace(input)
 
-	// @handle or bare handle (no dots = not a domain)
-	if strings.HasPrefix(input, "@") || (!strings.Contains(input, ".") && !strings.HasPrefix(input, "http") && input != "") {
-		handle := strings.TrimPrefix(input, "@")
-		if handle != "" {
-			return "twitter://" + handle, nil
-		}
+	// Reject Twitter/X handles and URLs
+	isTwitter := strings.HasPrefix(input, "@") ||
+		strings.Contains(input, "twitter.com/") ||
+		strings.Contains(input, "x.com/") ||
+		strings.HasPrefix(input, "twitter://")
+	if isTwitter {
+		return "", fmt.Errorf("Twitter/X feeds are not supported — the Twitter API costs $200/month. Please use a standard RSS feed URL instead (e.g. from a news website or blog)")
 	}
 
 	// Already a proper URL
 	if strings.HasPrefix(input, "http://") || strings.HasPrefix(input, "https://") {
-		// Convert twitter.com or x.com profile URLs
-		if strings.Contains(input, "twitter.com/") || strings.Contains(input, "x.com/") {
-			parts := strings.Split(strings.TrimRight(input, "/"), "/")
-			handle := parts[len(parts)-1]
-			if handle != "" {
-				return "twitter://" + handle, nil
-			}
-		}
 		return input, nil
+	}
+
+	// Bare handle with no dots — likely a social handle
+	handle := strings.TrimPrefix(input, "@")
+	if !strings.Contains(handle, ".") && handle != "" {
+		return "", fmt.Errorf("'%s' looks like a social media handle. Twitter/X feeds are not supported. Please provide a full RSS feed URL", input)
 	}
 
 	// Bare domain without scheme
@@ -324,19 +322,9 @@ func (r *RSSService) FetchAllHeadlines() ([]Headline, error) {
 func (r *RSSService) fetchFromURLs(urls []string, _ map[string]string) ([]Headline, error) {
 	var all []Headline
 	for _, feedURL := range urls {
-		// Twitter handles stored as twitter://username — use Twitter API directly
+		// Skip any legacy twitter:// entries still in DB
 		if strings.HasPrefix(feedURL, "twitter://") {
-			handle := strings.TrimPrefix(feedURL, "twitter://")
-			if r.twitterSvc != nil {
-				items, err := r.twitterSvc.FetchUserTimeline(handle)
-				if err != nil {
-					logrus.WithError(err).WithField("handle", handle).Warn("Failed to fetch Twitter timeline, skipping")
-					continue
-				}
-				all = append(all, items...)
-			} else {
-				logrus.WithField("handle", handle).Warn("Twitter handle in feeds but TWITTER_BEARER_TOKEN not set, skipping")
-			}
+			logrus.WithField("url", feedURL).Warn("Skipping twitter:// feed — Twitter API not supported")
 			continue
 		}
 		items, err := r.fetchHeadlinesFromFeed(feedURL, "")
