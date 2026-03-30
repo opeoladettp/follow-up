@@ -3,18 +3,19 @@ FROM golang:1.24-alpine AS builder
 
 # Force cache bust
 ENV CACHE_BUST=1
+ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
 RUN apk add --no-cache git ca-certificates
 
 COPY go.mod go.sum ./
-RUN GOTOOLCHAIN=local go mod download
+RUN go mod download
 
 COPY . .
 
 # Build with optimisations: strip debug info, disable CGO
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=auto \
     go build -ldflags="-s -w" -o main .
 
 # Final stage — minimal image
