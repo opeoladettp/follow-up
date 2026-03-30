@@ -47,11 +47,10 @@ type Headline struct {
 
 func NewRSSService(db *database.MongoDB, redis *database.Redis, rssFeeds []string) *RSSService {
 	svc := &RSSService{
-		db:         db,
-		redis:      redis,
-		parser:     gofeed.NewParser(),
-		seedFeeds:  rssFeeds,
-		twitterSvc: NewTwitterServiceFromEnv(),
+		db:        db,
+		redis:     redis,
+		parser:    gofeed.NewParser(),
+		seedFeeds: rssFeeds,
 	}
 	svc.seedDefaultFeeds()
 	return svc
