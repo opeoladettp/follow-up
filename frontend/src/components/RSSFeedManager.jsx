@@ -216,7 +216,9 @@ export default function RSSFeedManager({ user }) {
                     </button>
                   </div>
                 </div>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 truncate">{feed.url}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-2 truncate">
+                  {feed.url.startsWith('twitter://') ? `@${feed.url.replace('twitter://', '')}` : feed.url}
+                </p>
                 <span className="inline-block px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded-full">
                   {feed.category}
                 </span>

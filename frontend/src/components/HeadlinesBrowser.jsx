@@ -139,7 +139,11 @@ export default function HeadlinesBrowser({ onSelectHeadline, cachedHeadlines, on
 
   // Get unique sources — from DB feeds + any sources in headlines
   const headlineSources = new Set(headlines.map(h => h.source))
-  const feedSources = feeds.map(f => f.name)
+  const feedSources = feeds.map(f => 
+    f.url.startsWith('twitter://') 
+      ? '@' + f.url.replace('twitter://', '')  // show @handle for Twitter feeds
+      : f.name
+  )
   const allSources = ['all', ...new Set([...feedSources, ...headlineSources])]
 
   return (
