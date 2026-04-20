@@ -27,11 +27,20 @@ type HeyGenService struct {
 }
 
 // heygenV2Request matches POST /v2/videos.
-// callback_id is echoed back in the webhook payload so we can match the video to a report.
+// Supports three modes:
+//  1. avatar_id + script + voice_id  — HeyGen library avatar with TTS
+//  2. image_url + script + voice_id  — correspondent's photo with TTS
+//  3. image_url + audio_url          — correspondent's photo lip-synced to their own voice recording
 type heygenV2Request struct {
-	AvatarID    string             `json:"avatar_id"`
-	Script      string             `json:"script"`
-	VoiceID     string             `json:"voice_id"`
+	// Avatar — use one of: avatar_id, image_url, image_asset_id
+	AvatarID   string `json:"avatar_id,omitempty"`
+	ImageURL   string `json:"image_url,omitempty"`
+
+	// Voice — use script+voice_id for TTS, or audio_url for lip-sync to uploaded audio
+	Script   string `json:"script,omitempty"`
+	VoiceID  string `json:"voice_id,omitempty"`
+	AudioURL string `json:"audio_url,omitempty"`
+
 	CallbackID  string             `json:"callback_id,omitempty"`
 	Title       string             `json:"title,omitempty"`
 	AspectRatio string             `json:"aspect_ratio,omitempty"`
@@ -106,37 +115,71 @@ func (h *HeyGenService) WithOverrides(avatarID, voiceID string) *HeyGenService {
 
 // GenerateVideo submits a job to HeyGen and returns the video_id.
 // reportID is passed as callback_id so the webhook can match the video back to the report.
-func (h *HeyGenService) GenerateVideo(script, reportID string) (string, error) {
-	avatarID := h.avatarID
-	if avatarID == "" {
-		avatarID = fallbackAvatarID
-	}
-	voiceID := h.voiceID
-	if voiceID == "" {
-		voiceID = fallbackVoiceID
-	}
-
+//
+// Priority order:
+//  1. If imageURL + audioURL are both set → lip-sync the correspondent's own photo and voice (best quality, no IDs needed)
+//  2. If imageURL is set → use correspondent's photo with TTS voice
+//  3. If avatar/voice IDs are configured → use HeyGen library avatar
+//  4. Fallback to built-in defaults
+func (h *HeyGenService) GenerateVideo(script, reportID, imageURL, audioURL string) (string, error) {
 	if len(script) > 4900 {
 		script = script[:4900] + "..."
 	}
 
-	payload := heygenV2Request{
-		AvatarID:    avatarID,
-		Script:      script,
-		VoiceID:     voiceID,
-		CallbackID:  reportID,
-		AspectRatio: "16:9",
-		Voice:       &heygenVoiceTuning{Speed: 1.0},
+	var payload heygenV2Request
+	payload.CallbackID = reportID
+	payload.AspectRatio = "16:9"
+	payload.Voice = &heygenVoiceTuning{Speed: 1.0}
+
+	switch {
+	case imageURL != "" && audioURL != "":
+		// Mode 1: correspondent's photo + their own voice recording (lip-sync)
+		payload.ImageURL = imageURL
+		payload.AudioURL = audioURL
+		logrus.WithFields(logrus.Fields{
+			"mode":        "photo+audio",
+			"callback_id": reportID,
+		}).Info("HeyGen: using correspondent photo + audio lip-sync")
+
+	case imageURL != "":
+		// Mode 2: correspondent's photo + TTS voice
+		voiceID := h.voiceID
+		if voiceID == "" {
+			voiceID = fallbackVoiceID
+		}
+		payload.ImageURL = imageURL
+		payload.Script = script
+		payload.VoiceID = voiceID
+		logrus.WithFields(logrus.Fields{
+			"mode":        "photo+tts",
+			"voice_id":    voiceID,
+			"callback_id": reportID,
+		}).Info("HeyGen: using correspondent photo + TTS voice")
+
+	default:
+		// Mode 3/4: HeyGen library avatar (configured or fallback)
+		avatarID := h.avatarID
+		if avatarID == "" {
+			avatarID = fallbackAvatarID
+		}
+		voiceID := h.voiceID
+		if voiceID == "" {
+			voiceID = fallbackVoiceID
+		}
+		payload.AvatarID = avatarID
+		payload.Script = script
+		payload.VoiceID = voiceID
+		logrus.WithFields(logrus.Fields{
+			"mode":        "library-avatar",
+			"avatar_id":   avatarID,
+			"voice_id":    voiceID,
+			"callback_id": reportID,
+		}).Info("HeyGen: using library avatar + TTS voice")
 	}
 
 	body, _ := json.Marshal(payload)
 
-	logrus.WithFields(logrus.Fields{
-		"avatar_id":   avatarID,
-		"voice_id":    voiceID,
-		"script_len":  len(script),
-		"callback_id": reportID,
-	}).Info("Submitting video to HeyGen")
+	logrus.WithField("request_body", string(body)).Debug("HeyGen request payload")
 
 	req, err := http.NewRequest("POST", heygenBaseURL+"/v2/videos", bytes.NewReader(body))
 	if err != nil {

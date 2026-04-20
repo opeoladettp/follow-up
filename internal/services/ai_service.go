@@ -664,7 +664,19 @@ func (a *AIService) TriggerProductionPipeline(scriptText, identityImageURL, repo
 			svc = svc.WithOverrides(heygenAvatarID, heygenVoiceID)
 		}
 
-		videoID, err := svc.GenerateVideo(scriptText, reportID)
+		// Upload avatar photo to S3 to get a public URL for HeyGen
+		// (HeyGen needs a public URL, not a base64 data URL)
+		imageURL := ""
+		if identityImageURL != "" {
+			uploaded, err := a.UploadAvatarToS3(identityImageURL, reportID)
+			if err != nil {
+				logrus.WithError(err).Warn("Failed to upload avatar to S3, HeyGen will use library avatar")
+			} else {
+				imageURL = uploaded
+			}
+		}
+
+		videoID, err := svc.GenerateVideo(scriptText, reportID, imageURL, voiceAudioURL)
 		if err != nil {
 			logrus.WithError(err).Error("HeyGen video generation failed")
 			return "", fmt.Errorf("HeyGen video generation failed: %w", err)
