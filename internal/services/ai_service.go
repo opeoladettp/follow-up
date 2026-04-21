@@ -124,10 +124,18 @@ func didValidImageURL(u string) bool {
 // For HeyGen, the avatar URL is not used (HeyGen uses stock avatars), so we return as-is.
 // For D-ID, we upload to S3 to get a clean public HTTPS URL.
 func (a *AIService) PrepareAvatarURL(avatarURL, reportID string) (string, error) {
-	if a.heygenService != nil {
-		// HeyGen uses its own stock avatars — no need to process the user's avatar
+	// If the URL is already a public HTTPS URL (not base64), use it directly
+	if strings.HasPrefix(avatarURL, "https://") || strings.HasPrefix(avatarURL, "http://") {
 		return avatarURL, nil
 	}
+	// base64 data URL — must upload to S3 to get a public URL
+	if strings.HasPrefix(avatarURL, "data:") {
+		if a.s3Service == nil {
+			return "", fmt.Errorf("S3 is not configured — cannot upload avatar photo for HeyGen. Please configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_BUCKET in your environment variables")
+		}
+		return a.UploadAvatarToS3(avatarURL, reportID)
+	}
+	// Fallback: try uploading whatever we have
 	return a.UploadAvatarToS3(avatarURL, reportID)
 }
 
@@ -664,17 +672,15 @@ func (a *AIService) TriggerProductionPipeline(scriptText, identityImageURL, repo
 			svc = svc.WithOverrides(heygenAvatarID, heygenVoiceID)
 		}
 
-		// Upload avatar photo to S3 to get a public URL for HeyGen
-		// (HeyGen needs a public URL, not a base64 data URL)
-		imageURL := ""
-		if identityImageURL != "" {
-			uploaded, err := a.UploadAvatarToS3(identityImageURL, reportID)
-			if err != nil {
-				logrus.WithError(err).Warn("Failed to upload avatar to S3, HeyGen will use library avatar")
-			} else {
-				imageURL = uploaded
-			}
-		}
+		// identityImageURL is already a public S3 URL (uploaded by PrepareAvatarURL before this call)
+		// Pass it directly as image_url for HeyGen Avatar IV
+		imageURL := identityImageURL
+
+		logrus.WithFields(logrus.Fields{
+			"report_id": reportID,
+			"image_url": imageURL,
+			"has_audio": voiceAudioURL != "",
+		}).Info("Submitting to HeyGen")
 
 		videoID, err := svc.GenerateVideo(scriptText, reportID, imageURL, voiceAudioURL)
 		if err != nil {
