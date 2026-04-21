@@ -13,8 +13,8 @@ import (
 
 const (
 	heygenBaseURL = "https://api.heygen.com"
-	// Fallback stock avatar
-	fallbackAvatarID = "Jared_sitting_sofa_20220818"
+	// Fallback: "Jared Headshot" — confirmed present in account
+	fallbackAvatarID = "906e3c1914a441bea7c8d0b1bebbc981"
 	// Fallback English voice
 	fallbackVoiceID = "1bd001e7e50f421d891986aad5158bc8"
 )
@@ -26,51 +26,58 @@ type HeyGenService struct {
 	client   *http.Client
 }
 
-// heygenV2Request matches POST /v2/videos.
-// Supports three modes:
-//  1. avatar_id + script + voice_id  — HeyGen library avatar with TTS
-//  2. image_url + script + voice_id  — correspondent's photo with TTS
-//  3. image_url + audio_url          — correspondent's photo lip-synced to their own voice recording
-type heygenV2Request struct {
-	// Avatar — use one of: avatar_id, image_url, image_asset_id
-	AvatarID   string `json:"avatar_id,omitempty"`
-	ImageURL   string `json:"image_url,omitempty"`
+// --- Request types for POST /v2/video/generate ---
 
-	// Voice — use script+voice_id for TTS, or audio_url for lip-sync to uploaded audio
-	Script   string `json:"script,omitempty"`
-	VoiceID  string `json:"voice_id,omitempty"`
-	AudioURL string `json:"audio_url,omitempty"`
-
+type heygenVideoRequest struct {
+	VideoInputs []heygenVideoInput `json:"video_inputs"`
+	Dimension   heygenDimension    `json:"dimension"`
+	Caption     bool               `json:"caption"`
 	CallbackID  string             `json:"callback_id,omitempty"`
-	Title       string             `json:"title,omitempty"`
-	AspectRatio string             `json:"aspect_ratio,omitempty"`
-	Voice       *heygenVoiceTuning `json:"voice,omitempty"`
 }
 
-type heygenVoiceTuning struct {
-	Speed float64 `json:"speed,omitempty"`
+type heygenVideoInput struct {
+	Character heygenCharacter `json:"character"`
+	Voice     heygenVoice     `json:"voice"`
 }
 
-type heygenV2Response struct {
-	VideoID string `json:"video_id"`
-	Status  string `json:"status"`
+// heygenCharacter supports both talking_photo and avatar types.
+type heygenCharacter struct {
+	Type            string `json:"type"`
+	TalkingPhotoID  string `json:"talking_photo_id,omitempty"`
+	AvatarID        string `json:"avatar_id,omitempty"`
+	AvatarStyle     string `json:"avatar_style,omitempty"`
+}
+
+// heygenVoice supports text TTS and audio lip-sync.
+type heygenVoice struct {
+	Type      string  `json:"type"`
+	VoiceID   string  `json:"voice_id,omitempty"`
+	InputText string  `json:"input_text,omitempty"`
+	AudioURL  string  `json:"audio_url,omitempty"`
+	Speed     float64 `json:"speed,omitempty"`
+}
+
+type heygenDimension struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type heygenCreateResponse struct {
+	Error interface{} `json:"error"`
+	Data  struct {
+		VideoID string `json:"video_id"`
+	} `json:"data"`
+	// Some error responses use code/message at top level
 	Code    int    `json:"code"`
 	Message string `json:"message"`
 }
 
-type heygenV2StatusResponse struct {
-	VideoID  string  `json:"video_id"`
-	Status   string  `json:"status"`
-	VideoURL string  `json:"video_url"`
-	Duration float64 `json:"duration"`
-	Error    *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-	// Legacy wrapper (some endpoints still wrap in data{})
+// --- Status types for GET /v1/video_status.get ---
+
+type heygenStatusResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
-	Data    *struct {
+	Data    struct {
 		VideoID  string `json:"video_id"`
 		Status   string `json:"status"`
 		VideoURL string `json:"video_url"`
@@ -88,7 +95,7 @@ type HeyGenWebhookPayload struct {
 		VideoID    string `json:"video_id"`
 		URL        string `json:"url"`
 		Msg        string `json:"msg"`
-		CallbackID string `json:"callback_id"` // we set this to the report_id
+		CallbackID string `json:"callback_id"`
 	} `json:"event_data"`
 }
 
@@ -113,75 +120,90 @@ func (h *HeyGenService) WithOverrides(avatarID, voiceID string) *HeyGenService {
 	return &cp
 }
 
-// GenerateVideo submits a job to HeyGen and returns the video_id.
-// reportID is passed as callback_id so the webhook can match the video back to the report.
+// GenerateVideo submits a video job to HeyGen and returns the video_id.
 //
-// Priority order:
-//  1. If imageURL + audioURL are both set → lip-sync the correspondent's own photo and voice (best quality, no IDs needed)
-//  2. If imageURL is set → use correspondent's photo with TTS voice
-//  3. If avatar/voice IDs are configured → use HeyGen library avatar
-//  4. Fallback to built-in defaults
+// Priority:
+//  1. imageURL + audioURL  → talking_photo lip-synced to correspondent's voice
+//  2. imageURL only        → talking_photo with TTS voice
+//  3. configured avatarID  → HeyGen library avatar with TTS
+//  4. fallback avatarID    → "Jared Headshot" with TTS
 func (h *HeyGenService) GenerateVideo(script, reportID, imageURL, audioURL string) (string, error) {
 	if len(script) > 4900 {
 		script = script[:4900] + "..."
 	}
 
-	var payload heygenV2Request
-	payload.CallbackID = reportID
-	payload.AspectRatio = "16:9"
-	payload.Voice = &heygenVoiceTuning{Speed: 1.0}
+	voiceID := h.voiceID
+	if voiceID == "" {
+		voiceID = fallbackVoiceID
+	}
+
+	var character heygenCharacter
+	var voice heygenVoice
 
 	switch {
 	case imageURL != "" && audioURL != "":
-		// Mode 1: correspondent's photo + their own voice recording (lip-sync)
-		payload.ImageURL = imageURL
-		payload.AudioURL = audioURL
-		logrus.WithFields(logrus.Fields{
-			"mode":        "photo+audio",
-			"callback_id": reportID,
-		}).Info("HeyGen: using correspondent photo + audio lip-sync")
+		// Lip-sync: correspondent's photo + their own voice recording
+		character = heygenCharacter{
+			Type:           "talking_photo",
+			TalkingPhotoID: imageURL, // HeyGen accepts URL directly as talking_photo_id for uploaded photos
+		}
+		voice = heygenVoice{
+			Type:     "audio",
+			AudioURL: audioURL,
+		}
+		logrus.WithField("mode", "photo+audio").Info("HeyGen: lip-sync mode")
 
 	case imageURL != "":
-		// Mode 2: correspondent's photo + TTS voice
-		voiceID := h.voiceID
-		if voiceID == "" {
-			voiceID = fallbackVoiceID
+		// Correspondent's photo + TTS voice
+		character = heygenCharacter{
+			Type:           "talking_photo",
+			TalkingPhotoID: imageURL,
 		}
-		payload.ImageURL = imageURL
-		payload.Script = script
-		payload.VoiceID = voiceID
-		logrus.WithFields(logrus.Fields{
-			"mode":        "photo+tts",
-			"voice_id":    voiceID,
-			"callback_id": reportID,
-		}).Info("HeyGen: using correspondent photo + TTS voice")
+		voice = heygenVoice{
+			Type:      "text",
+			VoiceID:   voiceID,
+			InputText: script,
+			Speed:     1.0,
+		}
+		logrus.WithField("mode", "photo+tts").Info("HeyGen: photo + TTS mode")
 
 	default:
-		// Mode 3/4: HeyGen library avatar (configured or fallback)
+		// Library avatar fallback
 		avatarID := h.avatarID
 		if avatarID == "" {
 			avatarID = fallbackAvatarID
 		}
-		voiceID := h.voiceID
-		if voiceID == "" {
-			voiceID = fallbackVoiceID
+		character = heygenCharacter{
+			Type:        "talking_photo",
+			TalkingPhotoID: avatarID,
 		}
-		payload.AvatarID = avatarID
-		payload.Script = script
-		payload.VoiceID = voiceID
+		voice = heygenVoice{
+			Type:      "text",
+			VoiceID:   voiceID,
+			InputText: script,
+			Speed:     1.0,
+		}
 		logrus.WithFields(logrus.Fields{
-			"mode":        "library-avatar",
-			"avatar_id":   avatarID,
-			"voice_id":    voiceID,
-			"callback_id": reportID,
-		}).Info("HeyGen: using library avatar + TTS voice")
+			"mode":      "library-avatar",
+			"avatar_id": avatarID,
+		}).Info("HeyGen: library avatar mode")
+	}
+
+	payload := heygenVideoRequest{
+		VideoInputs: []heygenVideoInput{{Character: character, Voice: voice}},
+		Dimension:   heygenDimension{Width: 1280, Height: 720},
+		Caption:     false,
+		CallbackID:  reportID,
 	}
 
 	body, _ := json.Marshal(payload)
 
-	logrus.WithField("request_body", string(body)).Debug("HeyGen request payload")
+	logrus.WithFields(logrus.Fields{
+		"callback_id":  reportID,
+		"request_body": string(body),
+	}).Info("Submitting video to HeyGen")
 
-	req, err := http.NewRequest("POST", heygenBaseURL+"/v2/videos", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", heygenBaseURL+"/v2/video/generate", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -205,26 +227,26 @@ func (h *HeyGenService) GenerateVideo(script, reportID, imageURL, audioURL strin
 		return "", fmt.Errorf("heygen auth failed (HTTP %d) — check HEYGEN_API_KEY", resp.StatusCode)
 	}
 
-	var result heygenV2Response
+	var result heygenCreateResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return "", fmt.Errorf("failed to parse heygen response (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	if result.VideoID == "" {
-		return "", fmt.Errorf("heygen error (HTTP %d, code %d): %s — body: %s",
-			resp.StatusCode, result.Code, result.Message, string(respBody))
+	if result.Data.VideoID == "" {
+		return "", fmt.Errorf("heygen error (HTTP %d): %s — body: %s",
+			resp.StatusCode, result.Message, string(respBody))
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"video_id":    result.VideoID,
+		"video_id":    result.Data.VideoID,
 		"callback_id": reportID,
 	}).Info("HeyGen video job submitted")
-	return result.VideoID, nil
+	return result.Data.VideoID, nil
 }
 
-// GetVideoStatus fetches the current status of a video job.
+// GetVideoStatus polls for the status of a video job.
 func (h *HeyGenService) GetVideoStatus(videoID string) (status, videoURL string, err error) {
-	req, err := http.NewRequest("GET", heygenBaseURL+"/v2/videos/"+videoID, nil)
+	req, err := http.NewRequest("GET", heygenBaseURL+"/v1/video_status.get?video_id="+videoID, nil)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create status request: %w", err)
 	}
@@ -244,41 +266,24 @@ func (h *HeyGenService) GetVideoStatus(videoID string) (status, videoURL string,
 		"response_body": string(respBody),
 	}).Debug("HeyGen status response")
 
-	var result heygenV2StatusResponse
+	var result heygenStatusResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return "", "", fmt.Errorf("failed to parse heygen status (HTTP %d): %s", resp.StatusCode, string(respBody))
 	}
 
-	s, u := result.Status, result.VideoURL
-	var vidErr *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
-	vidErr = result.Error
-
-	if result.Data != nil {
-		if result.Data.Status != "" {
-			s = result.Data.Status
-		}
-		if result.Data.VideoURL != "" {
-			u = result.Data.VideoURL
-		}
-		if result.Data.Error != nil {
-			vidErr = result.Data.Error
-		}
+	if result.Code != 100 {
+		return "", "", fmt.Errorf("heygen status error %d: %s", result.Code, result.Message)
 	}
 
-	if vidErr != nil {
-		return "failed", "", fmt.Errorf("heygen video failed: %s", vidErr.Message)
+	if result.Data.Error != nil {
+		return "failed", "", fmt.Errorf("heygen video failed: %s", result.Data.Error.Message)
 	}
 
-	return s, u, nil
+	return result.Data.Status, result.Data.VideoURL, nil
 }
 
 // RegisterWebhook registers our callback URL with HeyGen for avatar_video events.
-// Safe to call on startup — it upserts if the URL is already registered.
 func (h *HeyGenService) RegisterWebhook(callbackURL string) error {
-	// First list existing webhooks to avoid duplicates
 	existing, err := h.listWebhooks()
 	if err == nil {
 		for _, ep := range existing {
@@ -351,7 +356,7 @@ func (h *HeyGenService) listWebhooks() ([]heygenWebhookEndpoint, error) {
 	return result.Data.Endpoints, nil
 }
 
-// WaitForVideo is kept for local/dev use where webhooks aren't reachable.
+// WaitForVideo polls until the video is completed or failed (max 10 min).
 func (h *HeyGenService) WaitForVideo(videoID string) (string, error) {
 	deadline := time.Now().Add(10 * time.Minute)
 	for time.Now().Before(deadline) {
